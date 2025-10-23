@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -16,7 +17,7 @@ func main() {
 	indexFlag := flag.String("index", defaultIndexPath(), "Path to index.html to serve on GET /")
 	flag.Parse()
 
-	handler, modTime, err := newIndexHandler(*indexFlag)
+	handler, err := newIndexHandler(*indexFlag)
 	if err != nil {
 		log.Fatalf("failed to prepare index handler: %v", err)
 	}
@@ -27,7 +28,7 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
-		handler(w, r, modTime)
+		handler(w, r)
 	})
 
 	server := &http.Server{
@@ -56,18 +57,18 @@ func defaultIndexPath() string {
 	return "index.html"
 }
 
-func newIndexHandler(path string) (func(http.ResponseWriter, *http.Request, time.Time), time.Time, error) {
+func newIndexHandler(path string) (func(http.ResponseWriter, *http.Request), error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("resolve absolute path: %w", err)
+		return nil, fmt.Errorf("resolve absolute path: %w", err)
 	}
 	content, err := os.ReadFile(absPath)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("read index file: %w", err)
+		return nil, fmt.Errorf("read index file: %w", err)
 	}
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("stat index file: %w", err)
+		return nil, fmt.Errorf("stat index file: %w", err)
 	}
 
 	modTime := info.ModTime()
@@ -76,50 +77,23 @@ func newIndexHandler(path string) (func(http.ResponseWriter, *http.Request, time
 		mediaType = "text/html; charset=utf-8"
 	}
 
-	return func(w http.ResponseWriter, r *http.Request, mod time.Time) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+	contentLength := strconv.Itoa(len(content))
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", fmt.Sprintf("%s, %s", http.MethodGet, http.MethodHead))
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
-	}
+		}
 		w.Header().Set("Content-Type", mediaType)
-		http.ServeContent(w, r, filepath.Base(absPath), mod, bytesReader(content))
-	}, modTime, nil
-}
-
-func bytesReader(b []byte) *byteReader {
-	return &byteReader{data: b}
-}
-
-type byteReader struct {
-	data []byte
-	pos  int64
-}
-
-func (r *byteReader) Read(p []byte) (int, error) {
-	if r.pos >= int64(len(r.data)) {
-		return 0, io.EOF
+		w.Header().Set("Last-Modified", modTime.UTC().Format(http.TimeFormat))
+		w.Header().Set("Content-Length", contentLength)
+		if r.Method == http.MethodHead {
+			return
+		}
+		if _, err := w.Write(content); err != nil {
+			log.Printf("error writing response: %v", err)
+		}
 	}
-	n := copy(p, r.data[r.pos:])
-	r.pos += int64(n)
-	return n, nil
-}
-
-func (r *byteReader) Seek(offset int64, whence int) (int64, error) {
-	var newPos int64
-	switch whence {
-	case io.SeekStart:
-		newPos = offset
-	case io.SeekCurrent:
-		newPos = r.pos + offset
-	case io.SeekEnd:
-		newPos = int64(len(r.data)) + offset
-	default:
-		return 0, fmt.Errorf("invalid whence %d", whence)
-	}
-	if newPos < 0 {
-		return 0, fmt.Errorf("negative position")
-	}
-	r.pos = newPos
-	return newPos, nil
+	return handler, nil
 }
