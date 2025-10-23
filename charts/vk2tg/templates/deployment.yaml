@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "vk2tg:latest"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

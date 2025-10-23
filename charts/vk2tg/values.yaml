@@ -1,9 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: vk2tg
-  tag: ""
-  pullPolicy: IfNotPresent
+  pullPolicy: Never
 
 service:
   type: ClusterIP
@@ -12,14 +10,15 @@ service:
 
 ingress:
   enabled: true
-  className: ""
+  className: "nginx"
   annotations: {}
   hosts:
-    - host: example.com
+    - host: vk2tg.bmstr.ru
       paths:
         - path: /
           pathType: Prefix
-  tls: []
+  tls: 
+    - vk2tg.bmstr.ru
 
 resources: {}
 
