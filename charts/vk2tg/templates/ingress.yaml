@@ -10,26 +10,19 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if .Values.ingress.className }}
-  ingressClassName: {{ .Values.ingress.className }}
-  {{- end }}
+  ingressClassName: nginx
   rules:
-    {{- range .Values.ingress.hosts }}
-    - host: {{ .host }}
+    - host: "vk2tg.bmstr.ru"
       http:
         paths:
-          {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          - path: /
+            pathType: Prefix
             backend:
               service:
                 name: {{ include "vk2tg.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
-          {{- end }}
-    {{- end }}
-  {{- with .Values.ingress.tls }}
   tls:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+    - hosts:
+      - vk2tg.bmstr.ru
 {{- end }}

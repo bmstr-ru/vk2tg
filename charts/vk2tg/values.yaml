@@ -13,12 +13,6 @@ ingress:
   className: "nginx"
   annotations: {}
   hosts:
-    - host: vk2tg.bmstr.ru
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: 
-    - vk2tg.bmstr.ru
 
 resources: {}
 
