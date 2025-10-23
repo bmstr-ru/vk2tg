@@ -1,29 +1,25 @@
-{{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "vk2tg.fullname" . }}
-  labels:
-    {{- include "vk2tg.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  name: vk2tg
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+  labels:
+    app: vk2tg
 spec:
   ingressClassName: nginx
   rules:
-    - host: "vk2tg.bmstr.ru"
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "vk2tg.fullname" $ }}
-                port:
-                  number: {{ $.Values.service.port }}
+  - host: vk2tg.bmstr.ru
+    http:
+      paths:
+      - backend:
+          service:
+            name: vk2tg
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
   tls:
-    - hosts:
-      - vk2tg.bmstr.ru
-{{- end }}
+  - hosts:
+    - vk2tg.bmstr.ru
+    secretName: vk2tg-tls

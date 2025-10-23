@@ -1,41 +1,31 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "vk2tg.fullname" . }}
+  name: vk2tg
   labels:
-    {{- include "vk2tg.labels" . | nindent 4 }}
+    app: vk2tg
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "vk2tg.name" . }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app: vk2tg
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "vk2tg.name" . }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
-      {{- with .Values.podAnnotations }}
-      annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        app: vk2tg
     spec:
       containers:
-        - name: server
+        - name: app
           image: "vk2tg:latest"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: Never
           ports:
             - name: http
-              containerPort: {{ .Values.service.targetPort }}
+              containerPort: 8080
               protocol: TCP
-          {{- with .Values.env }}
-          env:
-            {{- range . }}
-            - name: {{ .name }}
-              value: {{ .value | quote }}
-            {{- end }}
-          {{- end }}
-          {{- with .Values.resources }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            requests:
+              memory: "128Mi"
+              cpu: "300m"
+            limits:
+              memory: "128Mi"
+              cpu: "300m"

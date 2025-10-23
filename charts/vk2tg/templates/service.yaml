@@ -1,16 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "vk2tg.fullname" . }}
+  name: vk2tg
   labels:
-    {{- include "vk2tg.labels" . | nindent 4 }}
+    app: vk2tg
 spec:
-  type: {{ .Values.service.type }}
-  selector:
-    app.kubernetes.io/name: {{ include "vk2tg.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+  type: ClusterIP
   ports:
-    - name: http
-      port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.targetPort }}
+    - port: 80
+      targetPort: http
       protocol: TCP
+      name: http
+  selector:
+    app: vk2tg
