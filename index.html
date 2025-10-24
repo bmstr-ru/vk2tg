@@ -94,16 +94,14 @@
                       scope: 'groups', // Заполните нужными доступами по необходимости
                   });
 
-                  const oAuth = new VKID.OAuthList();
+      const oneTap = new VKID.OneTap();
 
-                  oAuth.render({
+      oneTap.render({
                       container: document.currentScript.parentElement,
-                      oauthList: [
-                          'vkid'
-                      ]
+        showAlternativeLogin: false
                   })
                       .on(VKID.WidgetEvents.ERROR, vkidOnError)
-                      .on(VKID.OAuthListInternalEvents.LOGIN_SUCCESS, function (payload) {
+      .on(VKID.OneTapInternalEvents.LOGIN_SUCCESS, function (payload) {
                           const code = payload.code;
                           const deviceId = payload.device_id;
                           console.log(code);
