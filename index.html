@@ -1,131 +1,179 @@
 <!DOCTYPE html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>vk2tg — пересылка постов из VK в Telegram</title>
     <style>
-      body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        margin: 0;
-        background: #f5f7fa;
-        color: #1f2933;
-        line-height: 1.6;
-      }
-      header {
-        background: #1a56db;
-        color: #fff;
-        padding: 2rem 1.5rem;
-        text-align: center;
-      }
-      main {
-        max-width: 720px;
-        margin: 0 auto;
-        padding: 2rem 1.5rem 3rem;
-      }
-      h1 {
-        margin: 0 0 0.5rem;
-        font-size: 2rem;
-      }
-      h2 {
-        margin-top: 2rem;
-        font-size: 1.4rem;
-      }
-      p {
-        margin: 0.75rem 0;
-      }
-      ul {
-        padding-left: 1.2rem;
-      }
-      #auth-placeholder {
-        margin-top: 3rem;
-        padding: 2rem;
-        border: 2px dashed #9aa5b1;
-        border-radius: 0.75rem;
-        text-align: center;
-        background: #fff;
-      }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            background: #f5f7fa;
+            color: #1f2933;
+            line-height: 1.6;
+        }
+
+        header {
+            background: #1a56db;
+            color: #fff;
+            padding: 2rem 1.5rem;
+            text-align: center;
+        }
+
+        main {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem 3rem;
+        }
+
+        h1 {
+            margin: 0 0 0.5rem;
+            font-size: 2rem;
+        }
+
+        h2 {
+            margin-top: 2rem;
+            font-size: 1.4rem;
+        }
+
+        p {
+            margin: 0.75rem 0;
+        }
+
+        ul {
+            padding-left: 1.2rem;
+        }
+
+        #auth-placeholder {
+            margin-top: 3rem;
+            padding: 2rem;
+            border: 2px dashed #9aa5b1;
+            border-radius: 0.75rem;
+            text-align: center;
+            background: #fff;
+        }
     </style>
-  </head>
-  <body>
-    <header>
-      <h1>vk2tg</h1>
-      <p>Утилита, которая пересылает посты из выбранной VK-группы в Telegram-канал.</p>
-    </header>
-    <main>
-      <section>
+</head>
+<body>
+<header>
+    <h1>vk2tg</h1>
+    <p>Утилита, которая пересылает посты из выбранной VK-группы в Telegram-канал.</p>
+</header>
+<main>
+    <section>
         <h2>О приложении</h2>
         <p>
-          vk2tg — это небольшое Go-приложение, которое обращается к API VK, забирает последние публикации со стены группы и
-          отправляет их в закрытый канал или чат Telegram. Утилита полезна, если вам нужно синхронизировать контент между
-          платформами без ручного копирования.
+            vk2tg — это небольшое Go-приложение, которое обращается к API VK, забирает последние публикации со стены
+            группы и
+            отправляет их в закрытый канал или чат Telegram. Утилита полезна, если вам нужно синхронизировать контент
+            между
+            платформами без ручного копирования.
         </p>
-      </section>
+    </section>
 
-      <section>
+    <section>
         <h2>Основные возможности</h2>
         <ul>
-          <li>Получение свежих постов с помощью `wall.get`.</li>
-          <li>Формирование читабельного сообщения с ссылкой на оригинал.</li>
-          <li>Отправка через стандартный эндпоинт Telegram `sendMessage`.</li>
+            <li>Получение свежих постов с помощью `wall.get`.</li>
+            <li>Формирование читабельного сообщения с ссылкой на оригинал.</li>
+            <li>Отправка через стандартный эндпоинт Telegram `sendMessage`.</li>
         </ul>
-      </section>
+    </section>
 
-      <section>
+    <section>
         <h2>Как использовать</h2>
         <p>
-          Подготовьте токен VK с доступом к стене, ID нужной группы, токен бота Telegram и ID канала/чата. Запустите утилиту через
-          <code>go run ./cmd/vk2tg</code>, передав параметры с помощью переменных окружения или флагов командной строки.
+            Подготовьте токен VK с доступом к стене, ID нужной группы, токен бота Telegram и ID канала/чата. Запустите
+            утилиту через
+            <code>go run ./cmd/vk2tg</code>, передав параметры с помощью переменных окружения или флагов командной
+            строки.
         </p>
-      </section>
+    </section>
 
-      <section id="auth-placeholder">
+    <section id="auth-placeholder">
         <div>
-          <script src="https://unpkg.com/@vkid/sdk@<3.0.0/dist-sdk/umd/index.js"></script>
-          <script type="text/javascript">
-              if ('VKIDSDK' in window) {
-                  const VKID = window.VKIDSDK;
+            <script src="https://unpkg.com/@vkid/sdk@<3.0.0/dist-sdk/umd/index.js"></script>
+            <script type="text/javascript">
+                var deviceId = ""
+                if ('VKIDSDK' in window) {
+                    const VKID = window.VKIDSDK;
 
-                  VKID.Config.init({
-                      app: 54260965,
-                      redirectUrl: 'https://vk2tg.bmstr.ru/auth',
-                      responseMode: VKID.ConfigResponseMode.Callback,
-                      source: VKID.ConfigSource.LOWCODE,
-                      scope: 'groups', // Заполните нужными доступами по необходимости
-                  });
+                    VKID.Config.init({
+                        app: 54260965,
+                        redirectUrl: 'https://vk2tg.bmstr.ru/auth',
+                        responseMode: VKID.ConfigResponseMode.Callback,
+                        source: VKID.ConfigSource.LOWCODE,
+                        scope: 'groups', // Заполните нужными доступами по необходимости
+                    });
 
-      const oneTap = new VKID.OneTap();
+                    const oneTap = new VKID.OneTap();
 
-      oneTap.render({
-                      container: document.currentScript.parentElement,
-        showAlternativeLogin: false
-                  })
-                      .on(VKID.WidgetEvents.ERROR, vkidOnError)
-      .on(VKID.OneTapInternalEvents.LOGIN_SUCCESS, function (payload) {
-                          const code = payload.code;
-                          const deviceId = payload.device_id;
-                          console.log(code);
-                          console.log(deviceId);
-                          console.log(payload);
+                    oneTap.render({
+                        container: document.currentScript.parentElement,
+                        showAlternativeLogin: false
+                    })
+                        .on(VKID.WidgetEvents.ERROR, vkidOnError)
+                        .on(VKID.OneTapInternalEvents.LOGIN_SUCCESS, function (payload) {
+                            const code = payload.code;
+                            deviceId = payload.device_id;
 
-                          VKID.Auth.exchangeCode(code, deviceId)
-                              .then(vkidOnSuccess)
-                              .catch(vkidOnError);
-                      });
+                            VKID.Auth.exchangeCode(code, deviceId)
+                                .then(vkidOnSuccess)
+                                .catch(vkidOnError);
+                        });
 
-                  function vkidOnSuccess(data) {
-                    alert("вход выполнен!");
-                    console.log(data);
-                      // Обработка полученного результата
-                  }
+                    async function postDataToBackend(url, data) {
+                        try {
+                            const response = await fetch(url, {
+                                method: 'POST', // Specify the HTTP method as POST
+                                headers: {
+                                    'Content-Type': 'application/json', // Indicate that the body is JSON
+                                    // Add any other necessary headers, e.g., for authentication
+                                    // 'Authorization': 'Bearer your_token_here'
+                                },
+                                body: JSON.stringify(data), // Convert the JavaScript object to a JSON string
+                            });
 
-                  function vkidOnError(error) {
-                      // Обработка ошибки
-                  }
-              }
-          </script>
-      </div>
-      </section>
-    </main>
-  </body>
+                            if (!response.ok) {
+                                // Handle HTTP errors (e.g., 404, 500)
+                                const errorData = await response.json(); // Attempt to parse error details if available
+                                throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
+                            }
+
+                            const responseData = await response.json(); // Parse the JSON response from the backend
+                            return responseData; // Return the data received from the backend
+                        } catch (error) {
+                            console.error('Error during POST request:', error);
+                            throw error; // Re-throw the error for further handling
+                        }
+                    }
+
+                    function vkidOnSuccess(data) {
+                        const backendUrl = '/auth/success'; // Replace with your actual backend endpoint
+                        const requestBody = {
+                            accessToken: data.access_token,
+                            refreshToken: data.refresh_token,
+                            state: data.state,
+                            deviceId: deviceId,
+                        };
+                        postDataToBackend(backendUrl, requestBody)
+                            .then(data => {
+                                console.log('Success:', data);
+                                // Process the successful response from the backend
+                            })
+                            .catch(error => {
+                                console.error('Failed to post data:', error);
+                                // Handle the error
+                            });
+                    }
+
+                    function vkidOnError(error) {
+                        // Обработка ошибки
+                    }
+                }
+            </script>
+        </div>
+    </section>
+</main>
+</body>
 </html>
