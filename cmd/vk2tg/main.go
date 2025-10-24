@@ -5,23 +5,27 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog"
+	zlog "github.com/rs/zerolog/log"
 )
 
 func main() {
+	zlog.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+
 	addrFlag := flag.String("addr", defaultAddr(), "HTTP listen address, e.g. :8080")
 	indexFlag := flag.String("index", defaultIndexPath(), "Path to index.html to serve on GET /")
 	flag.Parse()
 
 	handler, err := newIndexHandler(*indexFlag)
 	if err != nil {
-		log.Fatalf("failed to prepare index handler: %v", err)
+		zlog.Fatal().Err(err).Msg("failed to prepare index handler")
 	}
 
 	mux := http.NewServeMux()
@@ -40,9 +44,12 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("Serving %s on %s", *indexFlag, server.Addr)
+	zlog.Info().
+		Str("index_path", *indexFlag).
+		Str("addr", server.Addr).
+		Msg("serving index")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+		zlog.Fatal().Err(err).Msg("server error")
 	}
 }
 
@@ -95,7 +102,7 @@ func newIndexHandler(path string) (func(http.ResponseWriter, *http.Request), err
 			return
 		}
 		if _, err := w.Write(content); err != nil {
-			log.Printf("error writing response: %v", err)
+			zlog.Error().Err(err).Msg("error writing index response")
 		}
 	}
 	return handler, nil
@@ -106,6 +113,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		zlog.Error().Err(err).Msg("read request body failed")
 		http.Error(w, fmt.Sprintf("read body: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -116,8 +124,19 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 		"body":    string(body),
 	}
 
+	response, err := json.Marshal(payload)
+	if err != nil {
+		zlog.Error().Err(err).Msg("marshal auth payload failed")
+		http.Error(w, fmt.Sprintf("marshal payload: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	zlog.Info().
+		RawJSON("payload", response).
+		Msg("auth payload")
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("error writing JSON response: %v", err)
+	if _, err := w.Write(response); err != nil {
+		zlog.Error().Err(err).Msg("write auth response failed")
 	}
 }
