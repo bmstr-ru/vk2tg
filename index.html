@@ -91,7 +91,7 @@
                       redirectUrl: 'https://vk2tg.bmstr.ru/auth',
                       responseMode: VKID.ConfigResponseMode.Callback,
                       source: VKID.ConfigSource.LOWCODE,
-                      scope: '', // Заполните нужными доступами по необходимости
+                      scope: 'groups', // Заполните нужными доступами по необходимости
                   });
 
                   const oAuth = new VKID.OAuthList();
