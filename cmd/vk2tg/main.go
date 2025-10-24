@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net/http"
@@ -23,6 +25,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/auth", authHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -96,4 +99,25 @@ func newIndexHandler(path string) (func(http.ResponseWriter, *http.Request), err
 		}
 	}
 	return handler, nil
+}
+
+func authHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("read body: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	payload := map[string]any{
+		"url":     r.URL.String(),
+		"headers": r.Header,
+		"body":    string(body),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("error writing JSON response: %v", err)
+	}
 }
