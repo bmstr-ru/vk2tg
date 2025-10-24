@@ -108,7 +108,7 @@
                           const deviceId = payload.device_id;
                           console.log(code);
                           console.log(deviceId);
-                          console.log(code);
+                          console.log(payload);
 
                           VKID.Auth.exchangeCode(code, deviceId)
                               .then(vkidOnSuccess)
