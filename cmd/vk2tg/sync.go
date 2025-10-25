@@ -49,10 +49,8 @@ type wallSyncer struct {
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-
-	s.sync(ctx)
 
 	for {
 		select {
@@ -66,7 +64,7 @@ func (s *wallSyncer) run(ctx context.Context) {
 }
 
 func (s *wallSyncer) sync(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	accessToken, err := s.manager.RequestAccessToken(ctx)
