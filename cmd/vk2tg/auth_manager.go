@@ -129,10 +129,17 @@ func (m *tokenManager) run() {
 			reply <- token
 
 		case <-ticker.C:
+			m.logger.Info().
+				Msg("ticked for token refresh check")
+
 			if state == nil {
+				m.logger.Info().
+					Msg("state is null")
 				continue
 			}
 			if state.payload.AccessToken == "" || state.payload.RefreshToken == "" {
+				m.logger.Info().
+					Msg("access or refresh token is empty")
 				continue
 			}
 			eligible := state.lifetime <= 0
