@@ -96,7 +96,7 @@ func (m *tokenManager) RequestAccessToken(ctx context.Context) (string, error) {
 }
 
 func (m *tokenManager) run() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
 	var state *tokenState
@@ -142,24 +142,24 @@ func (m *tokenManager) run() {
 					Msg("access or refresh token is empty")
 				continue
 			}
-			eligible := state.lifetime <= 0
-			if !eligible {
-				remaining := time.Until(state.expiresAt)
-				if remaining < 0 {
-					remaining = 0
-				}
-				if state.lifetime > 0 {
-					fraction := remaining.Seconds() / state.lifetime.Seconds()
-					if fraction <= 0.15 {
-						eligible = true
-					}
-				}
-			}
-			if !eligible {
-				m.logger.Info().
-					Msg("token is not eligible for refresh yet")
-				continue
-			}
+			//eligible := state.lifetime <= 0
+			//if !eligible {
+			//	remaining := time.Until(state.expiresAt)
+			//	if remaining < 0 {
+			//		remaining = 0
+			//	}
+			//	if state.lifetime > 0 {
+			//		fraction := remaining.Seconds() / state.lifetime.Seconds()
+			//		if fraction <= 0.15 {
+			//			eligible = true
+			//		}
+			//	}
+			//}
+			//if !eligible {
+			//	m.logger.Info().
+			//		Msg("token is not eligible for refresh yet")
+			//	continue
+			//}
 
 			m.logger.Info().
 				Str("device_id", state.payload.DeviceID).
