@@ -28,7 +28,10 @@ func main() {
 		zlog.Fatal().Err(err).Msg("failed to prepare index handler")
 	}
 
+	tokenMgr := newTokenManager(zlog.Logger)
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/success", authSuccessHandler(tokenMgr))
 	mux.HandleFunc("/auth", authHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -138,5 +141,32 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(response); err != nil {
 		zlog.Error().Err(err).Msg("write auth response failed")
+	}
+}
+
+func authSuccessHandler(manager *tokenManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+
+		var payload authSuccessPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			zlog.Error().Err(err).Msg("decode auth success payload failed")
+			http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+			return
+		}
+
+		if err := payload.validate(); err != nil {
+			zlog.Error().Err(err).Msg("invalid auth success payload")
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		manager.Update(payload)
+		w.WriteHeader(http.StatusAccepted)
 	}
 }

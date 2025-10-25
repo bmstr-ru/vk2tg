@@ -117,16 +117,33 @@
                             const deviceId = payload.device_id;
 
                             VKID.Auth.exchangeCode(code, deviceId)
-                                .then(vkidOnSuccess)
+                                .then((data) => vkidOnSuccess(data, deviceId))
                                 .catch(vkidOnError);
                         });
 
-                    function vkidOnSuccess(data) {
-                        // Обработка полученного результата
+                    function vkidOnSuccess(data, deviceId) {
+                        const payload = {
+                            ...data,
+                            device_id: deviceId,
+                        };
+
+                        fetch('/auth/success', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(payload),
+                        }).then((response) => {
+                            if (!response.ok) {
+                                throw new Error(`Auth success forwarding failed: ${response.status}`);
+                            }
+                        }).catch((error) => {
+                            console.error('Failed to forward auth success data', error);
+                        });
                     }
 
                     function vkidOnError(error) {
-                        // Обработка ошибки
+                        console.error('VK ID auth error', error);
                     }
                 }
             </script>
