@@ -66,7 +66,7 @@ func (s *wallSyncer) run(ctx context.Context) {
 }
 
 func (s *wallSyncer) sync(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	accessToken, err := s.manager.RequestAccessToken(ctx)
