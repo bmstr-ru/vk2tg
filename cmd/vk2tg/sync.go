@@ -122,7 +122,7 @@ func (s *wallSyncer) fetchVKPosts(ctx context.Context, accessToken string) ([]vk
 	params.Set("access_token", accessToken)
 	params.Set("v", vkAPIVersion)
 	params.Set("count", "20")
-	params.Set("domain", "club232382073")
+	params.Set("domain", "club"+s.cfg.GroupID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s", vkWallGetURL, params.Encode()), nil)
 	if err != nil {
