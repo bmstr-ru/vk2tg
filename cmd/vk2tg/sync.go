@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +49,7 @@ type wallSyncer struct {
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	s.sync(ctx)
@@ -123,16 +122,7 @@ func (s *wallSyncer) fetchVKPosts(ctx context.Context, accessToken string) ([]vk
 	params.Set("access_token", accessToken)
 	params.Set("v", vkAPIVersion)
 	params.Set("count", "20")
-
-	if s.cfg.GroupID == "232382073" {
-		params.Set("domain", "club232382073")
-	} else {
-		groupNum, err := strconv.ParseInt(s.cfg.GroupID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("parse VK_GROUP_ID: %w", err)
-		}
-		params.Set("owner_id", fmt.Sprintf("-%d", groupNum))
-	}
+	params.Set("domain", "club232382073")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s", vkWallGetURL, params.Encode()), nil)
 	if err != nil {
@@ -158,6 +148,7 @@ func (s *wallSyncer) fetchVKPosts(ctx context.Context, accessToken string) ([]vk
 }
 
 func (s *wallSyncer) publishToTelegram(ctx context.Context, text string) error {
+	time.Sleep(5 * time.Second)
 	params := url.Values{}
 	params.Set("chat_id", s.cfg.ChannelID)
 	params.Set("text", text)
