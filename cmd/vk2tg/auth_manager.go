@@ -149,6 +149,8 @@ func (m *tokenManager) run() {
 				}
 			}
 			if !eligible {
+				m.logger.Info().
+					Msg("token is not eligible for refresh yet")
 				continue
 			}
 
