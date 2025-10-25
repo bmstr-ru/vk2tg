@@ -96,7 +96,7 @@ func (m *tokenManager) RequestAccessToken(ctx context.Context) (string, error) {
 }
 
 func (m *tokenManager) run() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	var state *tokenState
