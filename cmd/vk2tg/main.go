@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,6 +30,20 @@ func main() {
 	}
 
 	tokenMgr := newTokenManager(zlog.Logger)
+
+	groupID := os.Getenv("VK_GROUP_ID")
+	botToken := os.Getenv("TG_BOT_TOKEN")
+	channelID := os.Getenv("TG_CHANNEL_ID")
+
+	if groupID == "" || botToken == "" || channelID == "" {
+		zlog.Warn().Msg("VK to Telegram sync disabled: missing VK_GROUP_ID, TG_BOT_TOKEN, or TG_CHANNEL_ID")
+	} else {
+		startWallSync(context.Background(), zlog.Logger, tokenMgr, wallSyncConfig{
+			GroupID:   groupID,
+			BotToken:  botToken,
+			ChannelID: channelID,
+		})
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/success", authSuccessHandler(tokenMgr))

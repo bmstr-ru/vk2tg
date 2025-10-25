@@ -22,6 +22,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: vk2tg-secret
           resources:
             requests:
               memory: "128Mi"
