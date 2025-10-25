@@ -117,7 +117,6 @@ func (m *tokenManager) run() {
 			}
 
 			m.logger.Info().
-				Str("device_id", payload.DeviceID).
 				Dur("lifetime", lifetime).
 				Msg("received auth success payload")
 
@@ -129,9 +128,6 @@ func (m *tokenManager) run() {
 			reply <- token
 
 		case <-ticker.C:
-			m.logger.Info().
-				Msg("ticked for token refresh check")
-
 			if state == nil {
 				m.logger.Info().
 					Msg("state is null")
@@ -142,34 +138,32 @@ func (m *tokenManager) run() {
 					Msg("access or refresh token is empty")
 				continue
 			}
-			//eligible := state.lifetime <= 0
-			//if !eligible {
-			//	remaining := time.Until(state.expiresAt)
-			//	if remaining < 0 {
-			//		remaining = 0
-			//	}
-			//	if state.lifetime > 0 {
-			//		fraction := remaining.Seconds() / state.lifetime.Seconds()
-			//		if fraction <= 0.15 {
-			//			eligible = true
-			//		}
-			//	}
-			//}
-			//if !eligible {
-			//	m.logger.Info().
-			//		Msg("token is not eligible for refresh yet")
-			//	continue
-			//}
+			eligible := state.lifetime <= 0
+			if !eligible {
+				remaining := time.Until(state.expiresAt)
+				if remaining < 0 {
+					remaining = 0
+				}
+				if state.lifetime > 0 {
+					fraction := remaining.Seconds() / state.lifetime.Seconds()
+					if fraction <= 0.15 {
+						eligible = true
+					}
+				}
+			}
+			if !eligible {
+				m.logger.Info().
+					Msg("token is not eligible for refresh yet")
+				continue
+			}
 
 			m.logger.Info().
-				Str("device_id", state.payload.DeviceID).
 				Msg("refresh token triggered")
 
 			refreshed, err := m.refreshToken(state.payload)
 			if err != nil {
 				m.logger.Error().
 					Err(err).
-					Str("device_id", state.payload.DeviceID).
 					Msg("token refresh failed")
 				continue
 			}
@@ -184,7 +178,6 @@ func (m *tokenManager) run() {
 			}
 
 			m.logger.Info().
-				Str("device_id", refreshed.DeviceID).
 				Dur("lifetime", lifetime).
 				Msg("token refresh succeeded")
 		}
