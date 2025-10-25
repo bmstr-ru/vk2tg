@@ -94,13 +94,12 @@
         <div>
             <script src="https://unpkg.com/@vkid/sdk@<3.0.0/dist-sdk/umd/index.js"></script>
             <script type="text/javascript">
-                var deviceId = ""
                 if ('VKIDSDK' in window) {
                     const VKID = window.VKIDSDK;
 
                     VKID.Config.init({
                         app: 54260965,
-                        redirectUrl: 'https://vk2tg.bmstr.ru/auth',
+                        redirectUrl: 'https://vk2tg.bmstr.ru/',
                         responseMode: VKID.ConfigResponseMode.Callback,
                         source: VKID.ConfigSource.LOWCODE,
                         scope: 'groups', // Заполните нужными доступами по необходимости
@@ -115,56 +114,15 @@
                         .on(VKID.WidgetEvents.ERROR, vkidOnError)
                         .on(VKID.OneTapInternalEvents.LOGIN_SUCCESS, function (payload) {
                             const code = payload.code;
-                            deviceId = payload.device_id;
+                            const deviceId = payload.device_id;
 
                             VKID.Auth.exchangeCode(code, deviceId)
                                 .then(vkidOnSuccess)
                                 .catch(vkidOnError);
                         });
 
-                    async function postDataToBackend(url, data) {
-                        try {
-                            const response = await fetch(url, {
-                                method: 'POST', // Specify the HTTP method as POST
-                                headers: {
-                                    'Content-Type': 'application/json', // Indicate that the body is JSON
-                                    // Add any other necessary headers, e.g., for authentication
-                                    // 'Authorization': 'Bearer your_token_here'
-                                },
-                                body: JSON.stringify(data), // Convert the JavaScript object to a JSON string
-                            });
-
-                            if (!response.ok) {
-                                // Handle HTTP errors (e.g., 404, 500)
-                                const errorData = await response.json(); // Attempt to parse error details if available
-                                throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
-                            }
-
-                            const responseData = await response.json(); // Parse the JSON response from the backend
-                            return responseData; // Return the data received from the backend
-                        } catch (error) {
-                            console.error('Error during POST request:', error);
-                            throw error; // Re-throw the error for further handling
-                        }
-                    }
-
                     function vkidOnSuccess(data) {
-                        const backendUrl = '/auth/success'; // Replace with your actual backend endpoint
-                        const requestBody = {
-                            accessToken: data.access_token,
-                            refreshToken: data.refresh_token,
-                            state: data.state,
-                            deviceId: deviceId,
-                        };
-                        postDataToBackend(backendUrl, requestBody)
-                            .then(data => {
-                                console.log('Success:', data);
-                                // Process the successful response from the backend
-                            })
-                            .catch(error => {
-                                console.error('Failed to post data:', error);
-                                // Handle the error
-                            });
+                        // Обработка полученного результата
                     }
 
                     function vkidOnError(error) {
