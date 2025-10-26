@@ -24,28 +24,28 @@ type wallSyncConfig struct {
 	ChannelID string
 }
 
-func startWallSync(ctx context.Context, logger zerolog.Logger, manager *tokenManager, cfg wallSyncConfig) {
+func startWallSync(ctx context.Context, logger zerolog.Logger, manager *tokenManager, store *storage, cfg wallSyncConfig) {
 	logger.Info().
 		Str("vk_group_id", cfg.GroupID).
 		Msg("starting VK to Telegram sync worker")
 
 	syncer := &wallSyncer{
-		logger:      logger,
-		manager:     manager,
-		cfg:         cfg,
-		httpClient:  &http.Client{Timeout: 10 * time.Second},
-		publishedID: make(map[string]struct{}),
+		logger:     logger,
+		manager:    manager,
+		store:      store,
+		cfg:        cfg,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	go syncer.run(ctx)
 }
 
 type wallSyncer struct {
-	logger      zerolog.Logger
-	manager     *tokenManager
-	cfg         wallSyncConfig
-	httpClient  *http.Client
-	publishedID map[string]struct{}
+	logger     zerolog.Logger
+	manager    *tokenManager
+	store      *storage
+	cfg        wallSyncConfig
+	httpClient *http.Client
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
@@ -93,8 +93,17 @@ func (s *wallSyncer) sync(ctx context.Context) {
 		if post.ID == 0 {
 			continue
 		}
-		key := fmt.Sprintf("%d_%d", post.OwnerID, post.ID)
-		if _, exists := s.publishedID[key]; exists {
+
+		published, err := s.store.IsPostPublished(ctx, post.OwnerID, post.ID)
+		if err != nil {
+			s.logger.Error().
+				Err(err).
+				Int("owner_id", post.OwnerID).
+				Int("post_id", post.ID).
+				Msg("failed to check published status")
+			continue
+		}
+		if published {
 			continue
 		}
 
@@ -111,7 +120,13 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			continue
 		}
 
-		s.publishedID[key] = struct{}{}
+		if err := s.store.MarkPostPublished(ctx, post.OwnerID, post.ID); err != nil {
+			s.logger.Error().
+				Err(err).
+				Int("owner_id", post.OwnerID).
+				Int("post_id", post.ID).
+				Msg("failed to mark post as published")
+		}
 	}
 }
 

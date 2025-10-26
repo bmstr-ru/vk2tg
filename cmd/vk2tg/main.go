@@ -29,7 +29,15 @@ func main() {
 		zlog.Fatal().Err(err).Msg("failed to prepare index handler")
 	}
 
-	tokenMgr := newTokenManager(zlog.Logger)
+	ctx := context.Background()
+
+	store, err := newStorage(ctx, zlog.Logger)
+	if err != nil {
+		zlog.Fatal().Err(err).Msg("failed to initialize storage")
+	}
+	defer store.Close()
+
+	tokenMgr := newTokenManager(zlog.Logger, store)
 
 	groupID := os.Getenv("VK_GROUP_ID")
 	botToken := os.Getenv("TG_BOT_TOKEN")
@@ -38,7 +46,7 @@ func main() {
 	if groupID == "" || botToken == "" || channelID == "" {
 		zlog.Warn().Msg("VK to Telegram sync disabled: missing VK_GROUP_ID, TG_BOT_TOKEN, or TG_CHANNEL_ID")
 	} else {
-		startWallSync(context.Background(), zlog.Logger, tokenMgr, wallSyncConfig{
+		startWallSync(ctx, zlog.Logger, tokenMgr, store, wallSyncConfig{
 			GroupID:   groupID,
 			BotToken:  botToken,
 			ChannelID: channelID,

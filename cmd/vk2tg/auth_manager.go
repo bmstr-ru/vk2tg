@@ -56,13 +56,18 @@ type tokenManager struct {
 	updateCh   chan authSuccessPayload
 	requestCh  chan chan string
 	httpClient *http.Client
+	store      *storage
 }
 
-func newTokenManager(logger zerolog.Logger) *tokenManager {
+func newTokenManager(logger zerolog.Logger, store *storage) *tokenManager {
+	if store == nil {
+		panic("tokenManager requires non-nil storage")
+	}
 	m := &tokenManager{
 		logger:    logger,
 		updateCh:  make(chan authSuccessPayload),
 		requestCh: make(chan chan string),
+		store:     store,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -99,25 +104,21 @@ func (m *tokenManager) run() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
-	var state *tokenState
+	state := m.loadInitialState()
 
 	for {
 		select {
 		case payload := <-m.updateCh:
-			now := time.Now()
-			lifetime := time.Duration(payload.ExpiresIn) * time.Second
-			if lifetime < 0 {
-				lifetime = 0
+			newState, err := m.persistPayload(payload)
+			if err != nil {
+				m.logger.Error().
+					Err(err).
+					Msg("failed to persist auth success payload")
+				continue
 			}
-			state = &tokenState{
-				payload:   payload,
-				updatedAt: now,
-				expiresAt: now.Add(lifetime),
-				lifetime:  lifetime,
-			}
-
+			state = newState
 			m.logger.Info().
-				Dur("lifetime", lifetime).
+				Dur("lifetime", newState.lifetime).
 				Msg("received auth success payload")
 
 		case reply := <-m.requestCh:
@@ -168,20 +169,69 @@ func (m *tokenManager) run() {
 				continue
 			}
 
-			now := time.Now()
-			lifetime := time.Duration(refreshed.ExpiresIn) * time.Second
-			state = &tokenState{
-				payload:   refreshed,
-				updatedAt: now,
-				expiresAt: now.Add(lifetime),
-				lifetime:  lifetime,
+			newState, err := m.persistPayload(refreshed)
+			if err != nil {
+				m.logger.Error().
+					Err(err).
+					Msg("failed to persist refreshed token")
+				continue
 			}
+			state = newState
 
 			m.logger.Info().
-				Dur("lifetime", lifetime).
+				Dur("lifetime", newState.lifetime).
 				Msg("token refresh succeeded")
 		}
 	}
+}
+
+func (m *tokenManager) loadInitialState() *tokenState {
+	record, err := m.store.LoadTokenState(context.Background())
+	if err != nil {
+		m.logger.Error().
+			Err(err).
+			Msg("failed to load auth tokens from storage")
+		return nil
+	}
+	if record == nil {
+		return nil
+	}
+
+	lifetime := record.expiresAt.Sub(record.updatedAt)
+	if lifetime < 0 {
+		lifetime = 0
+	}
+
+	m.logger.Info().
+		Dur("lifetime", lifetime).
+		Msg("restored auth tokens from storage")
+
+	return &tokenState{
+		payload:   record.payload,
+		updatedAt: record.updatedAt,
+		expiresAt: record.expiresAt,
+		lifetime:  lifetime,
+	}
+}
+
+func (m *tokenManager) persistPayload(payload authSuccessPayload) (*tokenState, error) {
+	now := time.Now()
+	lifetime := time.Duration(payload.ExpiresIn) * time.Second
+	if lifetime < 0 {
+		lifetime = 0
+	}
+	expiresAt := now.Add(lifetime)
+
+	if err := m.store.UpsertTokenState(context.Background(), payload, now, expiresAt); err != nil {
+		return nil, err
+	}
+
+	return &tokenState{
+		payload:   payload,
+		updatedAt: now,
+		expiresAt: expiresAt,
+		lifetime:  lifetime,
+	}, nil
 }
 
 func (m *tokenManager) refreshToken(payload authSuccessPayload) (authSuccessPayload, error) {
