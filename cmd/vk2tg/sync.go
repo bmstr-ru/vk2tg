@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ type wallSyncer struct {
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -85,11 +86,15 @@ func (s *wallSyncer) sync(ctx context.Context) {
 	}
 
 	if len(posts) == 0 {
+		s.logger.Info().Msg("no posts received from VK")
 		return
 	}
 
-	for i := len(posts) - 1; i >= 0; i-- {
-		post := posts[i]
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].ID < posts[j].ID
+	})
+
+	for _, post := range posts {
 		if post.ID == 0 {
 			continue
 		}
@@ -104,6 +109,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			continue
 		}
 		if published {
+			s.logger.Info().Int("postId", post.ID).Msg("post already published")
 			continue
 		}
 
