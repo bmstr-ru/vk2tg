@@ -44,6 +44,7 @@ func main() {
 	groupID := os.Getenv("VK_GROUP_ID")
 	botToken := os.Getenv("TG_BOT_TOKEN")
 	channelID := os.Getenv("TG_CHANNEL_ID")
+	threadID := os.Getenv("TG_THREAD_ID")
 
 	if groupID == "" || botToken == "" || channelID == "" {
 		zlog.Warn().Msg("VK to Telegram sync disabled: missing VK_GROUP_ID, TG_BOT_TOKEN, or TG_CHANNEL_ID")
@@ -52,6 +53,7 @@ func main() {
 			GroupID:   groupID,
 			BotToken:  botToken,
 			ChannelID: channelID,
+			ThreadID:  threadID,
 		})
 	}
 

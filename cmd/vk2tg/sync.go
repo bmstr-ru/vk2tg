@@ -25,6 +25,7 @@ type wallSyncConfig struct {
 	GroupID   string
 	BotToken  string
 	ChannelID string
+	ThreadID  string
 }
 
 func startWallSync(ctx context.Context, logger zerolog.Logger, manager *tokenManager, store *storage, cfg wallSyncConfig) {
@@ -52,7 +53,7 @@ type wallSyncer struct {
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -181,6 +182,9 @@ func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) err
 	params.Set("chat_id", s.cfg.ChannelID)
 	params.Set("text", text)
 	params.Set("disable_web_page_preview", "false")
+	if s.cfg.ThreadID != "" {
+		params.Set("message_thread_id", s.cfg.ThreadID)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
 	if err != nil {
@@ -208,6 +212,9 @@ func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, capti
 	params.Set("photo", photoURL)
 	if caption != "" {
 		params.Set("caption", caption)
+	}
+	if s.cfg.ThreadID != "" {
+		params.Set("message_thread_id", s.cfg.ThreadID)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendPhotoURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
