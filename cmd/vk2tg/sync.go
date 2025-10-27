@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	vkWallGetURL       = "https://api.vk.com/method/wall.get"
-	vkAPIVersion       = "5.199"
-	telegramSendURLFmt = "https://api.telegram.org/bot%s/sendMessage"
+	vkWallGetURL            = "https://api.vk.com/method/wall.get"
+	vkAPIVersion            = "5.199"
+	telegramSendURLFmt      = "https://api.telegram.org/bot%s/sendMessage"
+	telegramSendPhotoURLFmt = "https://api.telegram.org/bot%s/sendPhoto"
 )
 
 type wallSyncConfig struct {
@@ -70,7 +71,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 
 	accessToken, err := s.manager.RequestAccessToken(ctx)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to get access token for sync")
+		s.logger.Error().Err(err).Stack().Msg("failed to get access token for sync")
 		return
 	}
 
@@ -81,7 +82,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 
 	posts, err := s.fetchVKPosts(ctx, accessToken)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to fetch posts from VK")
+		s.logger.Error().Err(err).Stack().Msg("failed to fetch posts from VK")
 		return
 	}
 
@@ -103,6 +104,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 		if err != nil {
 			s.logger.Error().
 				Err(err).
+				Stack().
 				Int("owner_id", post.OwnerID).
 				Int("post_id", post.ID).
 				Msg("failed to check published status")
@@ -121,14 +123,20 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			text = fmt.Sprintf("%s\n\n%s", text, link)
 		}
 
-		if err := s.publishToTelegram(ctx, text); err != nil {
-			s.logger.Error().Err(err).Msg("failed to publish message to Telegram")
+		if photoURL, ok := singlePhotoAttachmentURL(post); ok {
+			if err := s.publishPhotoToTelegram(ctx, photoURL, text); err != nil {
+				s.logger.Error().Err(err).Stack().Msg("failed to publish photo to Telegram")
+				continue
+			}
+		} else if err := s.publishTextToTelegram(ctx, text); err != nil {
+			s.logger.Error().Err(err).Stack().Msg("failed to publish message to Telegram")
 			continue
 		}
 
 		if err := s.store.MarkPostPublished(ctx, post.OwnerID, post.ID); err != nil {
 			s.logger.Error().
 				Err(err).
+				Stack().
 				Int("owner_id", post.OwnerID).
 				Int("post_id", post.ID).
 				Msg("failed to mark post as published")
@@ -166,7 +174,7 @@ func (s *wallSyncer) fetchVKPosts(ctx context.Context, accessToken string) ([]vk
 	return result.Response.Items, nil
 }
 
-func (s *wallSyncer) publishToTelegram(ctx context.Context, text string) error {
+func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) error {
 	time.Sleep(5 * time.Second)
 	params := url.Values{}
 	params.Set("chat_id", s.cfg.ChannelID)
@@ -192,10 +200,39 @@ func (s *wallSyncer) publishToTelegram(ctx context.Context, text string) error {
 	return nil
 }
 
+func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, caption string) error {
+	time.Sleep(5 * time.Second)
+	params := url.Values{}
+	params.Set("chat_id", s.cfg.ChannelID)
+	params.Set("photo", photoURL)
+	if caption != "" {
+		params.Set("caption", caption)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendPhotoURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
+	if err != nil {
+		return fmt.Errorf("build Telegram request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute Telegram request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("telegram API returned %s", resp.Status)
+	}
+
+	return nil
+}
+
 type vkPost struct {
-	ID      int    `json:"id"`
-	OwnerID int    `json:"owner_id"`
-	Text    string `json:"text"`
+	ID          int            `json:"id"`
+	OwnerID     int            `json:"owner_id"`
+	Text        string         `json:"text"`
+	Attachments []vkAttachment `json:"attachments"`
 }
 
 type vkWallResponse struct {
@@ -206,4 +243,56 @@ type vkWallResponse struct {
 		Code int    `json:"error_code"`
 		Msg  string `json:"error_msg"`
 	} `json:"error"`
+}
+
+type vkAttachment struct {
+	Type  string   `json:"type"`
+	Photo *vkPhoto `json:"photo"`
+}
+
+type vkPhoto struct {
+	Sizes []vkPhotoSize `json:"sizes"`
+}
+
+type vkPhotoSize struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Type   string `json:"type"`
+}
+
+func singlePhotoAttachmentURL(post vkPost) (string, bool) {
+	if len(post.Attachments) != 1 {
+		return "", false
+	}
+
+	att := post.Attachments[0]
+	if att.Type != "photo" || att.Photo == nil {
+		return "", false
+	}
+
+	return selectLargestPhotoURL(att.Photo.Sizes)
+}
+
+func selectLargestPhotoURL(sizes []vkPhotoSize) (string, bool) {
+	if len(sizes) == 0 {
+		return "", false
+	}
+
+	best := sizes[0]
+	bestArea := best.Width * best.Height
+
+	for _, size := range sizes[1:] {
+		area := size.Width * size.Height
+		if area > bestArea {
+			best = size
+			bestArea = area
+		}
+	}
+
+	if best.URL == "" {
+		return "", false
+	}
+
+	return best.URL, true
 }

@@ -15,9 +15,11 @@ import (
 
 	"github.com/rs/zerolog"
 	zlog "github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/pkgerrors"
 )
 
 func main() {
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	zlog.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 	addrFlag := flag.String("addr", defaultAddr(), "HTTP listen address, e.g. :8080")
