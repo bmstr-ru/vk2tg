@@ -124,7 +124,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			text = fmt.Sprintf("%s\n\n%s", text, link)
 		}
 
-		if photoURL, ok := singlePhotoAttachmentURL(post); ok {
+		if photoURL, ok := singlePhotoAttachmentURL(post); ok && len(text) < 1024 {
 			if err := s.publishPhotoToTelegram(ctx, photoURL, text); err != nil {
 				s.logger.Error().Err(err).Stack().Msg("failed to publish photo to Telegram")
 				continue
