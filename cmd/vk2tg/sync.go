@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -222,7 +223,11 @@ func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, capti
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("telegram API returned %s", resp.Status)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("error reading response body: %v", err)
+		}
+		return fmt.Errorf("telegram API returned %s: %s", resp.Status, string(bodyBytes))
 	}
 
 	return nil
