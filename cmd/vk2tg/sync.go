@@ -55,7 +55,7 @@ type wallSyncer struct {
 }
 
 func (s *wallSyncer) run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
