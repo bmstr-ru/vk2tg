@@ -10,15 +10,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog"
 )
 
 const (
-	vkWallGetURL            = "https://api.vk.com/method/wall.get"
-	vkAPIVersion            = "5.199"
-	telegramSendURLFmt      = "https://api.telegram.org/bot%s/sendMessage"
-	telegramSendPhotoURLFmt = "https://api.telegram.org/bot%s/sendPhoto"
+	vkWallGetURL                 = "https://api.vk.com/method/wall.get"
+	vkAPIVersion                 = "5.199"
+	telegramSendURLFmt           = "https://api.telegram.org/bot%s/sendMessage"
+	telegramSendPhotoURLFmt      = "https://api.telegram.org/bot%s/sendPhoto"
+	telegramSendMediaGroupURLFmt = "https://api.telegram.org/bot%s/sendMediaGroup"
 )
 
 type wallSyncConfig struct {
@@ -102,7 +104,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			continue
 		}
 
-		published, err := s.store.IsPostPublished(ctx, post.OwnerID, post.ID)
+		published, err := s.store.EnsureVKPost(ctx, post.OwnerID, post.ID, post.Hash)
 		if err != nil {
 			s.logger.Error().
 				Err(err).
@@ -125,23 +127,27 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			text = fmt.Sprintf("%s\n\n%s", text, link)
 		}
 
-		if photoURL, ok := singlePhotoAttachmentURL(post); ok && len(text) < 1024 {
-			if err := s.publishPhotoToTelegram(ctx, photoURL, text); err != nil {
-				s.logger.Error().Err(err).Stack().Msg("failed to publish photo to Telegram")
-				continue
-			}
-		} else if err := s.publishTextToTelegram(ctx, text); err != nil {
-			s.logger.Error().Err(err).Stack().Msg("failed to publish message to Telegram")
-			continue
-		}
-
-		if err := s.store.MarkPostPublished(ctx, post.OwnerID, post.ID); err != nil {
+		messages, err := s.publishPost(ctx, post, text)
+		if err != nil {
 			s.logger.Error().
 				Err(err).
 				Stack().
 				Int("owner_id", post.OwnerID).
 				Int("post_id", post.ID).
-				Msg("failed to mark post as published")
+				Msg("failed to publish post to Telegram")
+			continue
+		}
+
+		for _, msg := range messages {
+			if err := s.store.RecordTelegramPost(ctx, post.OwnerID, post.ID, msg.ID, msg.PublishedAt); err != nil {
+				s.logger.Error().
+					Err(err).
+					Stack().
+					Int("owner_id", post.OwnerID).
+					Int("post_id", post.ID).
+					Int64("telegram_message_id", msg.ID).
+					Msg("failed to record Telegram post")
+			}
 		}
 	}
 }
@@ -176,7 +182,68 @@ func (s *wallSyncer) fetchVKPosts(ctx context.Context, accessToken string) ([]vk
 	return result.Response.Items, nil
 }
 
-func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) error {
+func (s *wallSyncer) publishPost(ctx context.Context, post vkPost, text string) ([]telegramMessage, error) {
+	photoURLs := photoAttachmentURLs(post)
+	textLen := utf8.RuneCountInString(text)
+
+	var messages []telegramMessage
+
+	switch len(photoURLs) {
+	case 0:
+		msg, err := s.publishTextToTelegram(ctx, text)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	case 1:
+		photoURL := photoURLs[0]
+		if textLen < 1024 {
+			msg, err := s.publishPhotoToTelegram(ctx, photoURL, text)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msg)
+		} else {
+			msg, err := s.publishPhotoToTelegram(ctx, photoURL, "")
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msg)
+
+			msg, err = s.publishTextToTelegram(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msg)
+		}
+	default:
+		var (
+			groupMessages []telegramMessage
+			err           error
+		)
+		if textLen < 1024 {
+			groupMessages, err = s.publishMediaGroupToTelegram(ctx, photoURLs, text)
+		} else {
+			groupMessages, err = s.publishMediaGroupToTelegram(ctx, photoURLs, "")
+		}
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, groupMessages...)
+
+		if textLen >= 1024 {
+			msg, err := s.publishTextToTelegram(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, msg)
+		}
+	}
+
+	return messages, nil
+}
+
+func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) (telegramMessage, error) {
 	time.Sleep(5 * time.Second)
 	params := url.Values{}
 	params.Set("chat_id", s.cfg.ChannelID)
@@ -188,24 +255,33 @@ func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) err
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
 	if err != nil {
-		return fmt.Errorf("build Telegram request: %w", err)
+		return telegramMessage{}, fmt.Errorf("build Telegram request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("execute Telegram request: %w", err)
+		return telegramMessage{}, fmt.Errorf("execute Telegram request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("telegram API returned %s", resp.Status)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("read Telegram response: %w", err)
 	}
 
-	return nil
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return telegramMessage{}, fmt.Errorf("telegram API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	msg, err := parseTelegramSendResponse(body)
+	if err != nil {
+		return telegramMessage{}, err
+	}
+	return msg, nil
 }
 
-func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, caption string) error {
+func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, caption string) (telegramMessage, error) {
 	time.Sleep(5 * time.Second)
 	params := url.Values{}
 	params.Set("chat_id", s.cfg.ChannelID)
@@ -219,32 +295,107 @@ func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, capti
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendPhotoURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
 	if err != nil {
-		return fmt.Errorf("build Telegram request: %w", err)
+		return telegramMessage{}, fmt.Errorf("build Telegram request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("execute Telegram request: %w", err)
+		return telegramMessage{}, fmt.Errorf("execute Telegram request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("error reading response body: %v", err)
-		}
-		return fmt.Errorf("telegram API returned %s: %s", resp.Status, string(bodyBytes))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("read Telegram response: %w", err)
 	}
 
-	return nil
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return telegramMessage{}, fmt.Errorf("telegram API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	msg, err := parseTelegramSendResponse(body)
+	if err != nil {
+		return telegramMessage{}, err
+	}
+	return msg, nil
+}
+
+func (s *wallSyncer) publishMediaGroupToTelegram(ctx context.Context, photoURLs []string, caption string) ([]telegramMessage, error) {
+	time.Sleep(5 * time.Second)
+
+	media := make([]telegramInputMediaPhoto, 0, len(photoURLs))
+	for idx, url := range photoURLs {
+		item := telegramInputMediaPhoto{
+			Type:  "photo",
+			Media: url,
+		}
+		if idx == 0 && caption != "" {
+			item.Caption = caption
+		}
+		media = append(media, item)
+	}
+
+	if len(media) == 0 {
+		return nil, fmt.Errorf("sendMediaGroup requires at least one media item")
+	}
+
+	mediaPayload, err := json.Marshal(media)
+	if err != nil {
+		return nil, fmt.Errorf("encode media group payload: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("chat_id", s.cfg.ChannelID)
+	params.Set("media", string(mediaPayload))
+	if s.cfg.ThreadID != "" {
+		params.Set("message_thread_id", s.cfg.ThreadID)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendMediaGroupURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build Telegram media group request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute Telegram media group request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read Telegram media group response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("telegram API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	msgs, err := parseTelegramSendMediaGroupResponse(body)
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }
 
 type vkPost struct {
 	ID          int            `json:"id"`
 	OwnerID     int            `json:"owner_id"`
 	Text        string         `json:"text"`
+	Hash        string         `json:"hash"`
 	Attachments []vkAttachment `json:"attachments"`
+}
+
+type telegramMessagePayload struct {
+	MessageID int64 `json:"message_id"`
+	Date      int64 `json:"date"`
+}
+
+type telegramMessage struct {
+	ID          int64
+	PublishedAt time.Time
 }
 
 type vkWallResponse struct {
@@ -273,19 +424,6 @@ type vkPhotoSize struct {
 	Type   string `json:"type"`
 }
 
-func singlePhotoAttachmentURL(post vkPost) (string, bool) {
-	if len(post.Attachments) != 1 {
-		return "", false
-	}
-
-	att := post.Attachments[0]
-	if att.Type != "photo" || att.Photo == nil {
-		return "", false
-	}
-
-	return selectLargestPhotoURL(att.Photo.Sizes)
-}
-
 func selectLargestPhotoURL(sizes []vkPhotoSize) (string, bool) {
 	if len(sizes) == 0 {
 		return "", false
@@ -307,4 +445,102 @@ func selectLargestPhotoURL(sizes []vkPhotoSize) (string, bool) {
 	}
 
 	return best.URL, true
+}
+
+type telegramResponseEnvelope struct {
+	OK          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	Description string          `json:"description"`
+}
+
+type telegramInputMediaPhoto struct {
+	Type    string `json:"type"`
+	Media   string `json:"media"`
+	Caption string `json:"caption,omitempty"`
+}
+
+func parseTelegramSendResponse(body []byte) (telegramMessage, error) {
+	env, err := parseTelegramResponseEnvelope(body)
+	if err != nil {
+		return telegramMessage{}, err
+	}
+
+	var payload telegramMessagePayload
+	if err := json.Unmarshal(env.Result, &payload); err != nil {
+		return telegramMessage{}, fmt.Errorf("decode Telegram message: %w", err)
+	}
+
+	return telegramMessageFromPayload(payload)
+}
+
+func parseTelegramSendMediaGroupResponse(body []byte) ([]telegramMessage, error) {
+	env, err := parseTelegramResponseEnvelope(body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payloads []telegramMessagePayload
+	if err := json.Unmarshal(env.Result, &payloads); err != nil {
+		return nil, fmt.Errorf("decode Telegram media group: %w", err)
+	}
+
+	if len(payloads) == 0 {
+		return nil, fmt.Errorf("telegram media group response missing messages")
+	}
+
+	messages := make([]telegramMessage, 0, len(payloads))
+	for _, payload := range payloads {
+		msg, err := telegramMessageFromPayload(payload)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	return messages, nil
+}
+
+func parseTelegramResponseEnvelope(body []byte) (telegramResponseEnvelope, error) {
+	var env telegramResponseEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return telegramResponseEnvelope{}, fmt.Errorf("decode Telegram envelope: %w", err)
+	}
+
+	if !env.OK || len(env.Result) == 0 {
+		desc := env.Description
+		if desc == "" {
+			desc = strings.TrimSpace(string(body))
+		}
+		return telegramResponseEnvelope{}, fmt.Errorf("telegram API error payload: %s", desc)
+	}
+
+	return env, nil
+}
+
+func telegramMessageFromPayload(payload telegramMessagePayload) (telegramMessage, error) {
+	if payload.MessageID == 0 {
+		return telegramMessage{}, fmt.Errorf("telegram API response missing message_id")
+	}
+
+	publishedAt := time.Unix(payload.Date, 0).UTC()
+	if payload.Date == 0 {
+		publishedAt = time.Now().UTC()
+	}
+
+	return telegramMessage{
+		ID:          payload.MessageID,
+		PublishedAt: publishedAt,
+	}, nil
+}
+
+func photoAttachmentURLs(post vkPost) []string {
+	urls := make([]string, 0, len(post.Attachments))
+	for _, att := range post.Attachments {
+		if att.Type != "photo" || att.Photo == nil {
+			continue
+		}
+		if url, ok := selectLargestPhotoURL(att.Photo.Sizes); ok {
+			urls = append(urls, url)
+		}
+	}
+	return urls
 }

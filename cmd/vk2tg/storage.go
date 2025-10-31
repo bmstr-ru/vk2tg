@@ -238,39 +238,64 @@ func (s *storage) UpsertTokenState(ctx context.Context, payload authSuccessPaylo
 	return nil
 }
 
-func (s *storage) IsPostPublished(ctx context.Context, ownerID, postID int) (bool, error) {
+func (s *storage) EnsureVKPost(ctx context.Context, ownerID, postID int, hash string) (bool, error) {
 	ctx, cancel := s.withContext(ctx)
 	defer cancel()
 
 	const query = `
-		SELECT 1
-		FROM published_posts
-		WHERE owner_id = $1 AND post_id = $2
+		INSERT INTO vk_post (owner_id, id, hash)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (owner_id, id) DO UPDATE
+		SET hash = CASE
+			WHEN vk_post.hash = '' AND EXCLUDED.hash <> '' THEN EXCLUDED.hash
+			ELSE vk_post.hash
+		END
+		RETURNING published_at
 	`
 
-	var dummy int
-	err := s.db.QueryRowContext(ctx, query, ownerID, postID).Scan(&dummy)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+	var publishedAt sql.NullTime
+	if err := s.db.QueryRowContext(ctx, query, ownerID, postID, hash).Scan(&publishedAt); err != nil {
+		return false, fmt.Errorf("ensure vk post: %w", err)
 	}
-	if err != nil {
-		return false, fmt.Errorf("check published post: %w", err)
-	}
-	return true, nil
+
+	return publishedAt.Valid, nil
 }
 
-func (s *storage) MarkPostPublished(ctx context.Context, ownerID, postID int) error {
+func (s *storage) RecordTelegramPost(ctx context.Context, ownerID, postID int, messageID int64, publishedAt time.Time) error {
 	ctx, cancel := s.withContext(ctx)
 	defer cancel()
 
-	const query = `
-		INSERT INTO published_posts (owner_id, post_id)
-		VALUES ($1, $2)
-		ON CONFLICT (owner_id, post_id) DO NOTHING
-	`
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
-	if _, err := s.db.ExecContext(ctx, query, ownerID, postID); err != nil {
-		return fmt.Errorf("mark post published: %w", err)
+	const insertTGPost = `
+		INSERT INTO tg_post (vk_owner_id, vk_post_id, id, published_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (vk_owner_id, vk_post_id, id) DO NOTHING
+	`
+	if _, err = tx.ExecContext(ctx, insertTGPost, ownerID, postID, messageID, publishedAt.UTC()); err != nil {
+		return fmt.Errorf("insert telegram post: %w", err)
+	}
+
+	const upsertVKPost = `
+		INSERT INTO vk_post (owner_id, id, hash, published_at)
+		VALUES ($1, $2, '', $3)
+		ON CONFLICT (owner_id, id) DO UPDATE
+		SET published_at = COALESCE(vk_post.published_at, EXCLUDED.published_at)
+	`
+	if _, err = tx.ExecContext(ctx, upsertVKPost, ownerID, postID, publishedAt.UTC()); err != nil {
+		return fmt.Errorf("update vk post timestamp: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit telegram post tx: %w", err)
 	}
 	return nil
 }
