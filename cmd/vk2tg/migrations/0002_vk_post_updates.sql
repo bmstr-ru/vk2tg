@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE posted_mesage RENAME TO vk_post;
+ALTER TABLE published_posts RENAME TO vk_post;
 ALTER TABLE vk_post RENAME COLUMN post_id TO id;
 
 ALTER TABLE vk_post
@@ -24,28 +24,10 @@ DROP TABLE IF EXISTS tg_post;
 ALTER TABLE vk_post
 	DROP COLUMN IF EXISTS hash;
 
-DO $$
-BEGIN
-	IF EXISTS (
-		SELECT 1
-		FROM information_schema.columns
-		WHERE table_name = 'vk_post' AND column_name = 'id'
-	) AND NOT EXISTS (
-		SELECT 1
-		FROM information_schema.columns
-		WHERE table_name = 'vk_post' AND column_name = 'post_id'
-	) THEN
-		EXECUTE 'ALTER TABLE vk_post RENAME COLUMN id TO post_id';
-	END IF;
-END $$;
+ALTER TABLE vk_post RENAME COLUMN id TO post_id;
 
 ALTER TABLE vk_post
 	ALTER COLUMN published_at SET NOT NULL,
 	ALTER COLUMN published_at SET DEFAULT NOW();
 
-DO $$
-BEGIN
-	IF to_regclass('published_posts') IS NULL THEN
-		EXECUTE 'ALTER TABLE vk_post RENAME TO published_posts';
-	END IF;
-END $$;
+ALTER TABLE vk_post RENAME TO published_posts;
