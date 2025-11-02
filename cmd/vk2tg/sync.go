@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,8 @@ const (
 	telegramSendURLFmt           = "https://api.telegram.org/bot%s/sendMessage"
 	telegramSendPhotoURLFmt      = "https://api.telegram.org/bot%s/sendPhoto"
 	telegramSendMediaGroupURLFmt = "https://api.telegram.org/bot%s/sendMediaGroup"
+	telegramEditTextURLFmt       = "https://api.telegram.org/bot%s/editMessageText"
+	telegramEditCaptionURLFmt    = "https://api.telegram.org/bot%s/editMessageCaption"
 )
 
 type wallSyncConfig struct {
@@ -106,7 +109,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 
 		postText := strings.TrimSpace(post.Text)
 
-		published, err := s.store.EnsureVKPost(ctx, post.OwnerID, post.ID, post.Hash, postText)
+		state, err := s.store.EnsureVKPost(ctx, post.OwnerID, post.ID, post.Hash, postText)
 		if err != nil {
 			s.logger.Error().
 				Err(err).
@@ -116,10 +119,6 @@ func (s *wallSyncer) sync(ctx context.Context) {
 				Msg("failed to check published status")
 			continue
 		}
-		if published {
-			s.logger.Info().Int("postId", post.ID).Msg("post already published")
-			continue
-		}
 
 		text := postText
 		link := fmt.Sprintf("https://vk.com/wall-%s_%d", s.cfg.GroupID, post.ID)
@@ -127,6 +126,43 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			text = link
 		} else {
 			text = fmt.Sprintf("%s\n\n%s", text, link)
+		}
+
+		if state.Published {
+			if state.Hash == post.Hash {
+				s.logger.Info().
+					Int("postId", post.ID).
+					Msg("post already published and hash unchanged")
+				continue
+			}
+
+			updated, err := s.updateTelegramPostContent(ctx, post, text)
+			if err != nil {
+				s.logger.Error().
+					Err(err).
+					Stack().
+					Int("owner_id", post.OwnerID).
+					Int("post_id", post.ID).
+					Msg("failed to update Telegram post content")
+				continue
+			}
+			if !updated {
+				s.logger.Warn().
+					Int("owner_id", post.OwnerID).
+					Int("post_id", post.ID).
+					Msg("skipped Telegram post update after edit failure")
+				continue
+			}
+
+			if err := s.store.UpdateVKPostAfterEdit(ctx, post.OwnerID, post.ID, post.Hash, postText); err != nil {
+				s.logger.Error().
+					Err(err).
+					Stack().
+					Int("owner_id", post.OwnerID).
+					Int("post_id", post.ID).
+					Msg("failed to persist updated VK post hash")
+			}
+			continue
 		}
 
 		messages, err := s.publishPost(ctx, post, text)
@@ -243,6 +279,53 @@ func (s *wallSyncer) publishPost(ctx context.Context, post vkPost, text string) 
 	}
 
 	return messages, nil
+}
+
+func (s *wallSyncer) updateTelegramPostContent(ctx context.Context, post vkPost, text string) (bool, error) {
+	rec, err := s.store.LatestTelegramPost(ctx, post.OwnerID, post.ID)
+	if err != nil {
+		return false, fmt.Errorf("lookup latest Telegram post: %w", err)
+	}
+	if rec == nil {
+		return false, fmt.Errorf("no Telegram messages recorded for vk post %d", post.ID)
+	}
+
+	chatID := rec.ChannelID
+	if chatID == "" {
+		chatID = s.cfg.ChannelID
+	}
+	if chatID == "" {
+		return false, fmt.Errorf("missing Telegram channel ID for vk post %d", post.ID)
+	}
+
+	edited, err := s.tryEditTelegramMessage(ctx, chatID, rec.MessageID, text)
+	if err != nil {
+		return false, err
+	}
+	if !edited {
+		return false, nil
+	}
+
+	if err := s.store.UpdateTelegramPostText(ctx, post.OwnerID, post.ID, rec.MessageID, text); err != nil {
+		return false, fmt.Errorf("update stored Telegram post text: %w", err)
+	}
+	return true, nil
+}
+
+func (s *wallSyncer) tryEditTelegramMessage(ctx context.Context, chatID string, messageID int64, text string) (bool, error) {
+	if _, err := s.editTelegramMessageText(ctx, chatID, messageID, text); err == nil {
+		return true, nil
+	} else if !isTelegramBadRequest(err) {
+		return false, err
+	}
+
+	if _, err := s.editTelegramMessageCaption(ctx, chatID, messageID, text); err == nil {
+		return true, nil
+	} else if isTelegramBadRequest(err) {
+		return false, nil
+	} else {
+		return false, err
+	}
 }
 
 func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) (telegramMessage, error) {
@@ -387,6 +470,97 @@ func (s *wallSyncer) publishMediaGroupToTelegram(ctx context.Context, photoURLs 
 	return msgs, nil
 }
 
+func (s *wallSyncer) editTelegramMessageText(ctx context.Context, chatID string, messageID int64, text string) (telegramMessage, error) {
+	params := url.Values{}
+	params.Set("chat_id", chatID)
+	params.Set("message_id", fmt.Sprintf("%d", messageID))
+	params.Set("text", text)
+	params.Set("disable_web_page_preview", "false")
+	if s.cfg.ThreadID != "" {
+		params.Set("message_thread_id", s.cfg.ThreadID)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramEditTextURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("build Telegram edit text request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("execute Telegram edit text request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("read Telegram edit text response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusBadRequest {
+		return telegramMessage{}, &telegramAPIError{Code: http.StatusBadRequest, Description: strings.TrimSpace(string(body))}
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return telegramMessage{}, fmt.Errorf("telegram API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	msg, err := parseTelegramSendResponse(body)
+	if err != nil {
+		return telegramMessage{}, err
+	}
+	msg.Text = text
+	return msg, nil
+}
+
+func (s *wallSyncer) editTelegramMessageCaption(ctx context.Context, chatID string, messageID int64, caption string) (telegramMessage, error) {
+	params := url.Values{}
+	params.Set("chat_id", chatID)
+	params.Set("message_id", fmt.Sprintf("%d", messageID))
+	params.Set("caption", caption)
+	if s.cfg.ThreadID != "" {
+		params.Set("message_thread_id", s.cfg.ThreadID)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramEditCaptionURLFmt, s.cfg.BotToken), strings.NewReader(params.Encode()))
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("build Telegram edit caption request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("execute Telegram edit caption request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return telegramMessage{}, fmt.Errorf("read Telegram edit caption response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusBadRequest {
+		return telegramMessage{}, &telegramAPIError{Code: http.StatusBadRequest, Description: strings.TrimSpace(string(body))}
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return telegramMessage{}, fmt.Errorf("telegram API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	msg, err := parseTelegramSendResponse(body)
+	if err != nil {
+		return telegramMessage{}, err
+	}
+	msg.Text = caption
+	return msg, nil
+}
+
+func isTelegramBadRequest(err error) bool {
+	var apiErr *telegramAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == http.StatusBadRequest
+	}
+	return false
+}
+
 type vkPost struct {
 	ID          int            `json:"id"`
 	OwnerID     int            `json:"owner_id"`
@@ -459,12 +633,28 @@ type telegramResponseEnvelope struct {
 	OK          bool            `json:"ok"`
 	Result      json.RawMessage `json:"result"`
 	Description string          `json:"description"`
+	ErrorCode   int             `json:"error_code"`
 }
 
 type telegramInputMediaPhoto struct {
 	Type    string `json:"type"`
 	Media   string `json:"media"`
 	Caption string `json:"caption,omitempty"`
+}
+
+type telegramAPIError struct {
+	Code        int
+	Description string
+}
+
+func (e *telegramAPIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Description == "" {
+		return fmt.Sprintf("telegram API error %d", e.Code)
+	}
+	return fmt.Sprintf("telegram API error %d: %s", e.Code, e.Description)
 }
 
 func parseTelegramSendResponse(body []byte) (telegramMessage, error) {
@@ -513,12 +703,18 @@ func parseTelegramResponseEnvelope(body []byte) (telegramResponseEnvelope, error
 		return telegramResponseEnvelope{}, fmt.Errorf("decode Telegram envelope: %w", err)
 	}
 
-	if !env.OK || len(env.Result) == 0 {
+	if !env.OK {
 		desc := env.Description
 		if desc == "" {
 			desc = strings.TrimSpace(string(body))
 		}
-		return telegramResponseEnvelope{}, fmt.Errorf("telegram API error payload: %s", desc)
+		return telegramResponseEnvelope{}, &telegramAPIError{
+			Code:        env.ErrorCode,
+			Description: desc,
+		}
+	}
+	if len(env.Result) == 0 {
+		return telegramResponseEnvelope{}, fmt.Errorf("telegram API response missing result payload")
 	}
 
 	return env, nil

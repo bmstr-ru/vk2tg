@@ -88,6 +88,16 @@ type storage struct {
 	timeout time.Duration
 }
 
+type vkPostState struct {
+	Published bool
+	Hash      string
+}
+
+type storedTelegramPost struct {
+	MessageID int64
+	ChannelID string
+}
+
 func newStorage(ctx context.Context, logger zerolog.Logger) (*storage, error) {
 	cfg, err := loadDBConfigFromEnv()
 	if err != nil {
@@ -238,7 +248,65 @@ func (s *storage) UpsertTokenState(ctx context.Context, payload authSuccessPaylo
 	return nil
 }
 
-func (s *storage) EnsureVKPost(ctx context.Context, ownerID, postID int, hash string, postText string) (bool, error) {
+func (s *storage) EnsureVKPost(ctx context.Context, ownerID, postID int, hash string, postText string) (vkPostState, error) {
+	ctx, cancel := s.withContext(ctx)
+	defer cancel()
+
+	var (
+		existingHash sql.NullString
+		publishedAt  sql.NullTime
+	)
+
+	const selectQuery = `
+		SELECT hash, published_at
+		FROM vk_post
+		WHERE owner_id = $1 AND id = $2
+	`
+
+	err := s.db.QueryRowContext(ctx, selectQuery, ownerID, postID).Scan(&existingHash, &publishedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			var text sql.NullString
+			if trimmed := strings.TrimSpace(postText); trimmed != "" {
+				text = sql.NullString{String: trimmed, Valid: true}
+			}
+
+			const insertQuery = `
+				INSERT INTO vk_post (owner_id, id, hash, post_text)
+				VALUES ($1, $2, $3, $4)
+			`
+			if _, err := s.db.ExecContext(ctx, insertQuery, ownerID, postID, hash, text); err != nil {
+				return vkPostState{}, fmt.Errorf("insert vk post: %w", err)
+			}
+
+			return vkPostState{
+				Published: false,
+				Hash:      hash,
+			}, nil
+		}
+		return vkPostState{}, fmt.Errorf("query vk post: %w", err)
+	}
+
+	if trimmed := strings.TrimSpace(postText); trimmed != "" {
+		const updateTextQuery = `
+			UPDATE vk_post
+			SET post_text = COALESCE(vk_post.post_text, $3)
+			WHERE owner_id = $1 AND id = $2
+		`
+		if _, err := s.db.ExecContext(ctx, updateTextQuery, ownerID, postID, trimmed); err != nil {
+			return vkPostState{}, fmt.Errorf("update vk post text: %w", err)
+		}
+	}
+
+	state := vkPostState{
+		Published: publishedAt.Valid,
+		Hash:      existingHash.String,
+	}
+
+	return state, nil
+}
+
+func (s *storage) UpdateVKPostAfterEdit(ctx context.Context, ownerID, postID int, hash string, postText string) error {
 	ctx, cancel := s.withContext(ctx)
 	defer cancel()
 
@@ -248,23 +316,68 @@ func (s *storage) EnsureVKPost(ctx context.Context, ownerID, postID int, hash st
 	}
 
 	const query = `
-		INSERT INTO vk_post (owner_id, id, hash, post_text)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (owner_id, id) DO UPDATE
-		SET hash = CASE
-			WHEN vk_post.hash = '' AND EXCLUDED.hash <> '' THEN EXCLUDED.hash
-			ELSE vk_post.hash
-		END,
-		post_text = COALESCE(vk_post.post_text, EXCLUDED.post_text)
-		RETURNING published_at
+		UPDATE vk_post
+		SET hash = $3,
+			post_text = COALESCE($4, post_text)
+		WHERE owner_id = $1 AND id = $2
+	`
+	if _, err := s.db.ExecContext(ctx, query, ownerID, postID, hash, text); err != nil {
+		return fmt.Errorf("update vk post hash: %w", err)
+	}
+	return nil
+}
+
+func (s *storage) LatestTelegramPost(ctx context.Context, ownerID, postID int) (*storedTelegramPost, error) {
+	ctx, cancel := s.withContext(ctx)
+	defer cancel()
+
+	const query = `
+		SELECT id, channel_id
+		FROM tg_post
+		WHERE vk_owner_id = $1 AND vk_post_id = $2
+		ORDER BY id DESC
+		LIMIT 1
 	`
 
-	var publishedAt sql.NullTime
-	if err := s.db.QueryRowContext(ctx, query, ownerID, postID, hash, text).Scan(&publishedAt); err != nil {
-		return false, fmt.Errorf("ensure vk post: %w", err)
+	var (
+		messageID int64
+		channelID sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, query, ownerID, postID).Scan(&messageID, &channelID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query latest tg post: %w", err)
 	}
 
-	return publishedAt.Valid, nil
+	rec := &storedTelegramPost{
+		MessageID: messageID,
+	}
+	if channelID.Valid {
+		rec.ChannelID = channelID.String
+	}
+	return rec, nil
+}
+
+func (s *storage) UpdateTelegramPostText(ctx context.Context, ownerID, postID int, messageID int64, messageText string) error {
+	ctx, cancel := s.withContext(ctx)
+	defer cancel()
+
+	var text sql.NullString
+	if trimmed := strings.TrimSpace(messageText); trimmed != "" {
+		text = sql.NullString{String: trimmed, Valid: true}
+	}
+
+	const query = `
+		UPDATE tg_post
+		SET post_text = $4
+		WHERE vk_owner_id = $1 AND vk_post_id = $2 AND id = $3
+	`
+	if _, err := s.db.ExecContext(ctx, query, ownerID, postID, messageID, text); err != nil {
+		return fmt.Errorf("update telegram post text: %w", err)
+	}
+	return nil
 }
 
 func (s *storage) RecordTelegramPost(ctx context.Context, ownerID, postID int, messageID int64, channelID string, messageText string, publishedAt time.Time) error {
