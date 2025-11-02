@@ -104,7 +104,9 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			continue
 		}
 
-		published, err := s.store.EnsureVKPost(ctx, post.OwnerID, post.ID, post.Hash)
+		postText := strings.TrimSpace(post.Text)
+
+		published, err := s.store.EnsureVKPost(ctx, post.OwnerID, post.ID, post.Hash, postText)
 		if err != nil {
 			s.logger.Error().
 				Err(err).
@@ -119,7 +121,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 			continue
 		}
 
-		text := strings.TrimSpace(post.Text)
+		text := postText
 		link := fmt.Sprintf("https://vk.com/wall-%s_%d", s.cfg.GroupID, post.ID)
 		if text == "" {
 			text = link
@@ -139,7 +141,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 		}
 
 		for _, msg := range messages {
-			if err := s.store.RecordTelegramPost(ctx, post.OwnerID, post.ID, msg.ID, msg.PublishedAt); err != nil {
+			if err := s.store.RecordTelegramPost(ctx, post.OwnerID, post.ID, msg.ID, msg.Text, msg.PublishedAt); err != nil {
 				s.logger.Error().
 					Err(err).
 					Stack().
@@ -278,6 +280,7 @@ func (s *wallSyncer) publishTextToTelegram(ctx context.Context, text string) (te
 	if err != nil {
 		return telegramMessage{}, err
 	}
+	msg.Text = text
 	return msg, nil
 }
 
@@ -318,6 +321,7 @@ func (s *wallSyncer) publishPhotoToTelegram(ctx context.Context, photoURL, capti
 	if err != nil {
 		return telegramMessage{}, err
 	}
+	msg.Text = caption
 	return msg, nil
 }
 
@@ -377,6 +381,9 @@ func (s *wallSyncer) publishMediaGroupToTelegram(ctx context.Context, photoURLs 
 	if err != nil {
 		return nil, err
 	}
+	if caption != "" && len(msgs) > 0 {
+		msgs[0].Text = caption
+	}
 	return msgs, nil
 }
 
@@ -395,6 +402,7 @@ type telegramMessagePayload struct {
 
 type telegramMessage struct {
 	ID          int64
+	Text        string
 	PublishedAt time.Time
 }
 
