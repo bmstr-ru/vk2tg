@@ -267,7 +267,7 @@ func (s *storage) EnsureVKPost(ctx context.Context, ownerID, postID int, hash st
 	return publishedAt.Valid, nil
 }
 
-func (s *storage) RecordTelegramPost(ctx context.Context, ownerID, postID int, messageID int64, messageText string, publishedAt time.Time) error {
+func (s *storage) RecordTelegramPost(ctx context.Context, ownerID, postID int, messageID int64, channelID string, messageText string, publishedAt time.Time) error {
 	ctx, cancel := s.withContext(ctx)
 	defer cancel()
 
@@ -287,12 +287,13 @@ func (s *storage) RecordTelegramPost(ctx context.Context, ownerID, postID int, m
 	}
 
 	const insertTGPost = `
-		INSERT INTO tg_post (vk_owner_id, vk_post_id, id, post_text, published_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO tg_post (vk_owner_id, vk_post_id, id, post_text, published_at, channel_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (vk_owner_id, vk_post_id, id) DO UPDATE
-		SET post_text = COALESCE(tg_post.post_text, EXCLUDED.post_text)
+		SET post_text = COALESCE(tg_post.post_text, EXCLUDED.post_text),
+			channel_id = COALESCE(tg_post.channel_id, EXCLUDED.channel_id)
 	`
-	if _, err = tx.ExecContext(ctx, insertTGPost, ownerID, postID, messageID, text, publishedAt.UTC()); err != nil {
+	if _, err = tx.ExecContext(ctx, insertTGPost, ownerID, postID, messageID, text, publishedAt.UTC(), channelID); err != nil {
 		return fmt.Errorf("insert telegram post: %w", err)
 	}
 

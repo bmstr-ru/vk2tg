@@ -141,7 +141,7 @@ func (s *wallSyncer) sync(ctx context.Context) {
 		}
 
 		for _, msg := range messages {
-			if err := s.store.RecordTelegramPost(ctx, post.OwnerID, post.ID, msg.ID, msg.Text, msg.PublishedAt); err != nil {
+			if err := s.store.RecordTelegramPost(ctx, post.OwnerID, post.ID, msg.ID, s.cfg.ChannelID, msg.Text, msg.PublishedAt); err != nil {
 				s.logger.Error().
 					Err(err).
 					Stack().
