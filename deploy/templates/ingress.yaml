@@ -1,3 +1,4 @@
+{{- $host := required "ingress.host is required" .Values.ingress.host -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -9,7 +10,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: vk2tg.bmstr.ru
+  - host: {{ $host }}
     http:
       paths:
       - backend:
@@ -21,5 +22,5 @@ spec:
         pathType: Prefix
   tls:
   - hosts:
-    - vk2tg.bmstr.ru
+    - {{ $host }}
     secretName: vk2tg-tls

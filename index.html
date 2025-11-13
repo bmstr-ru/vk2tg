@@ -114,9 +114,11 @@
                 if ('VKIDSDK' in window) {
                     const VKID = window.VKIDSDK;
 
+                    const redirectUrl = new URL('/', window.location.href).href; // ensures we keep current origin
+
                     VKID.Config.init({
                         app: 54260965,
-                        redirectUrl: 'https://vk2tg.bmstr.ru/',
+                        redirectUrl,
                         responseMode: VKID.ConfigResponseMode.Callback,
                         source: VKID.ConfigSource.LOWCODE,
                         scope: 'groups', // Заполните нужными доступами по необходимости
